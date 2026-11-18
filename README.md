@@ -55,7 +55,7 @@ Actions 那次运行页面**最底部**有个 **Artifacts** 区域，下载 `Cha
 
 传到手机（数据线 / 网盘 / 微信文件传输都行）→ 点开安装 → 系统提示"未知来源"，允许即可。
 
-> 这是 **debug 签名**的包，装得上、用得爽，但**不能上应用商店**。要正式版见第六节。
+> 从 v2 起是 **release 签名**（仓库里带着固定证书 `keystore/chatcell.p12`），所以**以后的更新都能直接覆盖安装、数据不丢**。第一次从旧的 debug 包换过来需要卸载一次，详见第六节。
 
 ---
 
@@ -128,28 +128,39 @@ cd android ; ./gradlew assembleDebug
 
 ---
 
-## 六、升级成正式版（可选）
+## 六、签名说明（重要，别跳过）
 
-要给别人的手机装、或上架，需要 release 签名：
+仓库里带了固定签名证书：`keystore/chatcell.p12`
 
-1. 本地生成 keystore（**备份好，丢了就不能更新已发布的包**）：
+| 项 | 值 |
+|---|---|
+| 格式 | PKCS12 |
+| 别名 alias | `chatcell` |
+| 密码 | `chatcell2026` |
+| 有效期 | 到 2056-11-10 |
 
-```powershell
-keytool -genkey -v -keystore release.keystore -alias chatcell -keyalg RSA -keysize 2048 -validity 10000
-```
+**为什么必须固定签名**
 
-2. 转成 Base64：
+GitHub Actions 每次都用一台全新的机器。如果不指定签名，Gradle 会现场生成一个**随机的 debug 证书**——所以每一次构建出来的 APK 签名都不一样。Android 只允许签名相同的新包覆盖旧包，签名一变就只能卸载重装，**一卸载数据就没了**。
 
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore")) | Set-Clipboard
-```
+**怎么做的**
 
-3. 仓库 **Settings → Secrets and variables → Actions** 加四个 Secret：
-   `KEYSTORE_BASE64`、`KEYSTORE_PASSWORD`、`KEY_ALIAS`（`chatcell`）、`KEY_PASSWORD`
+1. `keystore/chatcell.p12` 提交进仓库
+2. workflow 里先用 `keytool` 把它转成 JKS（`$RUNNER_TEMP/app-release.jks`）
+3. 用 `-Pandroid.injected.signing.*` 系列参数把签名信息注入给 Gradle（这样不用改 CI 现场生成的 `android/app/build.gradle`）
+4. 构建目标从 `assembleDebug` 改成 `assembleRelease`
 
-4. 在 `android/app/build.gradle` 里配 `signingConfigs`，workflow 里把 `assembleDebug` 换成 `assembleRelease`。
+**⚠️ 一定要备份这个 p12 文件**
 
-> `android/` 是 CI 现场生成的，所以第 4 步意味着要把 `android/` 目录纳入版本管理（改 `.gitignore`），或者用 Capacitor 的 `build-extras` 钩子注入。
+它丢了，就再也签不出能覆盖安装的更新包，只能卸载重装、数据清空。想换证书同理——换了就等于换了一个新应用。
+
+**安全性**
+
+密码写在 workflow 和本文件里，拿到仓库的人都能签一个同包名的 APK。这是自用 App，不上架、不做签名校验，所以可以接受。如果要正式发布，请把密码挪到 GitHub Secrets。
+
+**从旧的 debug 包升级过来**
+
+旧包的签名是 CI 随机生成的，无法复刻，所以**这一次必须卸载重装**（会话会丢）。从本版之后的所有更新都能直接覆盖安装。
 
 ---
 
