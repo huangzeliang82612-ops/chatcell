@@ -150,6 +150,75 @@ keytool -genkey -v -keystore release.keystore -alias chatcell -keyalg RSA -keysi
 
 ---
 
+## 八、实测踩坑记录（首次跑通，务必保留）
+
+这是把 CI 从三次红色改成绿色过程中踩到的真坑，下次改 workflow 前先看这里。
+
+### 1. JDK 必须是 21，不能是 17
+
+**现象**
+
+```
+Execution failed for task ':capacitor-android:compileDebugJavaWithJavac'.
+> error: invalid source release: 21
+```
+
+**原因**：Capacitor 7 的 Android 库源码按 Java 21 编译，JDK 17 的 javac 最高只认到 17，直接拒编。
+
+**修法**：`actions/setup-java` 里写 `java-version: '21'`。
+
+### 2. 不要用 `android-actions/setup-android`
+
+**现象**：`安装 Android 命令行工具` 这一步直接红。
+
+**原因**：该 action 已停更，被 GitHub 强制在 Node 24 运行时下执行，不稳定；且每次都要从 `dl.google.com` 重下一遍 cmdline-tools，容易超时。
+
+**修法**：删掉它。`ubuntu-latest` 的 runner 镜像**本身预装了完整的 Android SDK**，`ANDROID_HOME` 和 `sdkmanager` 都是现成的，直接用即可。
+
+### 3. Gradle 找不到 Android SDK
+
+**修法**：构建前显式写入
+
+```bash
+echo "sdk.dir=${ANDROID_HOME}" > android/local.properties
+```
+
+环境变量不一定能跨 step 传到 Gradle，落成文件最保险。
+
+### 4. `gradlew` 丢了执行权限
+
+**修法**：`chmod +x android/gradlew`
+
+在 Windows 上提交的仓库，到 Linux runner 上经常丢可执行位，不处理直接 `Permission denied`。
+
+### 5. git 的两个坑
+
+- `git add .` 漏掉末尾那个点 → 报 `Nothing specified, nothing added`。用 `git add -A` 更防呆。
+- **千万别在家目录跑 `git init`**。会产生 `C:\Users\<你>\.git`，之后在家目录任何位置执行 git 命令都会用这个仓库，一个 `git add .` 就可能把整个用户目录推到远程。
+
+### 已验证通过的点（真机实测）
+
+| 项 | 结论 |
+|---|---|
+| 套壳后的 origin | `https://localhost`，DeepSeek API **接受**，无需额外加转发层 |
+| 流式输出 | 逐字流畅，无掉帧 |
+| Markdown | 表格、代码块渲染正常 |
+| 键盘弹出 | 不遮挡输入框 |
+| API Key 测试连接 | 正常返回 |
+
+### 改代码之后的更新流程
+
+```powershell
+# 改完文件
+git add -A
+git commit -m "改了什么"
+git push
+```
+
+→ 等 Actions 变绿 → 下载新 APK → **直接覆盖安装**（同名同签名，会话数据不会丢）。
+
+---
+
 ## 许可证
 
 自己写的代码，随便用。DeepSeek 的 API 使用需遵守其服务条款。
