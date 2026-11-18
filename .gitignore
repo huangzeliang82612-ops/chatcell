@@ -1,0 +1,25 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+out/
+
+# Capacitor 生成的 Android 原生工程：由 CI 现场生成，不入库
+# （如果你想用 Android Studio 在本地打开，本地执行 npx cap add android 即可）
+android/
+
+# 签名材料 —— 绝对不要提交
+*.keystore
+*.jks
+keystore.properties
+release/
+
+# 杂项
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+.vite/
+.env
+.env.local
