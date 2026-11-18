@@ -1,3 +1,5 @@
+/* ============================ 主题变量 ============================ */
+
 :root {
   --bg: #0f1115;
   --bg-soft: #171a21;
@@ -9,6 +11,28 @@
   --accent-soft: rgba(77, 107, 254, 0.14);
   --danger: #ff5c5c;
   --radius: 14px;
+  --code-bg: #0b0d12;
+  --code-inline: rgba(255, 255, 255, 0.08);
+  --reasoning-bg: rgba(255, 255, 255, 0.025);
+  --chat-mask: rgba(0, 0, 0, 0.55);
+  --shadow: rgba(0, 0, 0, 0.55);
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f7f9;
+  --bg-soft: #ffffff;
+  --bg-raise: #eef0f4;
+  --line: #dde1e8;
+  --text: #1a1d23;
+  --text-dim: #6b7280;
+  --accent: #3b5bfd;
+  --accent-soft: rgba(59, 91, 253, 0.1);
+  --danger: #e5484d;
+  --code-bg: #f2f4f7;
+  --code-inline: rgba(0, 0, 0, 0.06);
+  --reasoning-bg: rgba(0, 0, 0, 0.025);
+  --chat-mask: rgba(255, 255, 255, 0.62);
+  --shadow: rgba(0, 0, 0, 0.28);
 }
 
 * {
@@ -102,8 +126,12 @@ body {
   padding: 8px 12px;
   background: rgba(255, 92, 92, 0.12);
   border-bottom: 1px solid rgba(255, 92, 92, 0.35);
-  color: #ffb3b3;
+  color: #ff7b7b;
   font-size: 13px;
+}
+
+:root[data-theme='light'] .error-bar {
+  color: #c0292e;
 }
 
 .error-bar span {
@@ -115,7 +143,7 @@ body {
   flex: 0 0 auto;
   background: none;
   border: none;
-  color: #ffb3b3;
+  color: inherit;
   font-size: 15px;
   cursor: pointer;
 }
@@ -127,6 +155,15 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 14px 12px 6px;
+  background-color: var(--bg);
+}
+
+/* 有自定义背景时：遮罩 + 图片一起当背景，消息照常浮在上面 */
+.chat.has-bg {
+  background-image: linear-gradient(var(--chat-mask), var(--chat-mask)), var(--chat-bg-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .empty {
@@ -228,7 +265,7 @@ body {
   margin-top: 6px;
   padding: 9px 12px;
   border-left: 2px solid var(--line);
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--reasoning-bg);
   border-radius: 0 9px 9px 0;
   color: var(--text-dim);
   font-size: 13px;
@@ -291,7 +328,7 @@ body {
 .markdown code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.88em;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--code-inline);
   padding: 2px 5px;
   border-radius: 5px;
 }
@@ -299,7 +336,7 @@ body {
 .markdown pre {
   margin: 0 0 10px;
   padding: 11px 13px;
-  background: #0b0d12;
+  background: var(--code-bg);
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow-x: auto;
@@ -411,7 +448,7 @@ body {
 .drawer-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--shadow);
   z-index: 40;
   display: flex;
 }
@@ -504,7 +541,7 @@ body {
 .sheet-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--shadow);
   z-index: 50;
   display: flex;
   align-items: flex-end;
@@ -553,7 +590,8 @@ body {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -567,7 +605,8 @@ body {
 }
 
 .field input:focus,
-.field textarea:focus {
+.field textarea:focus,
+.field select:focus {
   border-color: var(--accent);
 }
 
@@ -653,4 +692,196 @@ body {
   color: var(--danger);
   font-size: 14px;
   cursor: pointer;
+}
+
+/* ============================ 新增：分区标题 ============================ */
+
+.section {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+  letter-spacing: 0.02em;
+}
+
+/* ============================ 新增：主题切换 ============================ */
+
+.segment {
+  display: flex;
+  gap: 8px;
+}
+
+.segment button {
+  flex: 1 1 0;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.segment button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ============================ 新增：背景设置 ============================ */
+
+.bg-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bg-preview {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-raise) center/cover no-repeat;
+}
+
+.bg-row .grow {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bg-row .mini-btn {
+  width: 100%;
+}
+
+/* ============================ 新增：人格 ============================ */
+
+.persona-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.persona-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.persona-item.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.persona-radio {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  position: relative;
+}
+
+.persona-item.on .persona-radio {
+  border-color: var(--accent);
+}
+
+.persona-item.on .persona-radio::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.persona-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.persona-name {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.persona-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.persona-act {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.persona-form {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.persona-form .field:last-of-type {
+  margin-bottom: 8px;
+}
+
+.persona-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.persona-empty {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+/* ============================ 新增：数据区 ============================ */
+
+.data-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.data-actions .mini-btn {
+  flex: 1 1 0;
+  height: 42px;
+  font-size: 14px;
+}
+
+.data-tip {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.hidden-input {
+  display: none;
 }

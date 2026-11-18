@@ -1,19 +1,83 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { streamChat, pingApi, DEFAULT_BASE_URL, DEFAULT_MODEL } from './api.js'
 import {
+  bulkPutSessions,
   clearAllSessions,
   createSession,
+  deleteBackgroundBlob,
   deleteSession,
   deriveTitle,
+  getActivePersona,
   listSessions,
+  loadBackgroundBlob,
   loadSettings,
   newId,
   putSession,
+  saveBackgroundBlob,
   saveSettings
 } from './storage.js'
+import { exportSessions, parseBackupText } from './backup.js'
 import { renderMarkdown } from './markdown.js'
 
-/* ------------------------------- 小组件 ------------------------------- */
+/* ------------------------------- 工具函数 ------------------------------- */
+
+/** 读文件为文本（file.text() 在旧 WebView 上不一定有，兜一层 FileReader） */
+function readFileAsText(file) {
+  if (typeof file.text === 'function') return file.text()
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('读取文件失败'))
+    reader.readAsText(file)
+  })
+}
+
+/** 压缩图片，最长边限制在 maxSide 以内，输出 jpeg Blob */
+async function compressImage(file, maxSide = 1600, quality = 0.85) {
+  let bitmap = null
+
+  if (typeof createImageBitmap === 'function') {
+    try {
+      bitmap = await createImageBitmap(file)
+    } catch {
+      bitmap = null
+    }
+  }
+
+  // 老 WebView 可能没有 createImageBitmap，退回 Image + objectURL
+  if (!bitmap) {
+    const url = URL.createObjectURL(file)
+    try {
+      bitmap = await new Promise((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve(img)
+        img.onerror = () => reject(new Error('图片读不出来，换一张试试'))
+        img.src = url
+      })
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 3000)
+    }
+  }
+
+  const srcW = bitmap.width || bitmap.naturalWidth
+  const srcH = bitmap.height || bitmap.naturalHeight
+  const scale = Math.min(1, maxSide / Math.max(srcW, srcH))
+  const w = Math.max(1, Math.round(srcW * scale))
+  const h = Math.max(1, Math.round(srcH * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(bitmap, 0, 0, w, h)
+  if (typeof bitmap.close === 'function') bitmap.close()
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality))
+  if (!blob) throw new Error('图片处理失败')
+  return blob
+}
+
+/* ------------------------------- 消息组件 ------------------------------- */
 
 function MessageItem({ msg }) {
   const isUser = msg.role === 'user'
@@ -51,24 +115,48 @@ function MessageItem({ msg }) {
   )
 }
 
-function SettingsSheet({ open, onClose, settings, onSave }) {
+/* ------------------------------- 设置面板 ------------------------------- */
+
+function SettingsSheet(props) {
+  const {
+    open,
+    onClose,
+    settings,
+    onSave,
+    onUpdateSetting,
+    hasBackground,
+    bgPreviewUrl,
+    onPickBackground,
+    onClearBackground,
+    importInputRef,
+    onExport,
+    dataBusy,
+    dataMsg
+  } = props
+
   const [draft, setDraft] = useState(settings)
   const [showKey, setShowKey] = useState(false)
   const [testState, setTestState] = useState({ busy: false, msg: '' })
+  const [editing, setEditing] = useState(null) // { id?, name, prompt } | null
 
+  // 只在面板打开的那一刻同步一次 draft。
+  // 如果依赖 settings，切换主题/选中人格时会把用户正在输入的内容冲掉。
   useEffect(() => {
     if (open) {
       setDraft(settings)
       setTestState({ busy: false, msg: '' })
+      setEditing(null)
     }
-  }, [open, settings])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   if (!open) return null
 
   const update = (key, value) => setDraft((d) => ({ ...d, [key]: value }))
+  const personas = Array.isArray(settings.personas) ? settings.personas : []
 
   const handleSave = () => {
-    let extra = draft.extraBody
+    const extra = draft.extraBody
     if (extra && extra.trim()) {
       try {
         JSON.parse(extra)
@@ -95,6 +183,44 @@ function SettingsSheet({ open, onClose, settings, onSave }) {
     }
   }
 
+  /* ---- 人格操作 ---- */
+
+  const savePersona = () => {
+    if (!editing) return
+    const name = (editing.name || '').trim()
+    const prompt = (editing.prompt || '').trim()
+    if (!name) {
+      setTestState({ busy: false, msg: '⚠ 人格名称不能为空' })
+      return
+    }
+    if (!prompt) {
+      setTestState({ busy: false, msg: '⚠ 人格内容不能为空' })
+      return
+    }
+    const list = personas.slice()
+    if (editing.id) {
+      const idx = list.findIndex((p) => p.id === editing.id)
+      if (idx >= 0) list[idx] = { ...list[idx], name, prompt }
+    } else {
+      list.push({ id: newId(), name, prompt })
+    }
+    onUpdateSetting('personas', list)
+    setEditing(null)
+    setTestState({ busy: false, msg: '' })
+  }
+
+  const removePersona = (id) => {
+    if (!confirm('删除这个人格？')) return
+    const list = personas.filter((p) => p.id !== id)
+    onUpdateSetting('personas', list)
+    if (settings.activePersonaId === id) onUpdateSetting('activePersonaId', '')
+    if (editing && editing.id === id) setEditing(null)
+  }
+
+  const togglePersona = (id) => {
+    onUpdateSetting('activePersonaId', settings.activePersonaId === id ? '' : id)
+  }
+
   return (
     <div className="sheet-mask" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
@@ -104,6 +230,8 @@ function SettingsSheet({ open, onClose, settings, onSave }) {
             ✕
           </button>
         </div>
+
+        {/* ---------------- 接口 ---------------- */}
 
         <label className="field">
           <span>API Key</span>
@@ -163,10 +291,10 @@ function SettingsSheet({ open, onClose, settings, onSave }) {
         <label className="field">
           <span>额外请求参数（JSON，可留空）</span>
           <textarea
-            rows={4}
+            rows={3}
             value={draft.extraBody}
             spellCheck="false"
-            placeholder='例如 {"thinking": {"type": "enabled"}}&#10;具体字段以 DeepSeek API 文档为准'
+            placeholder='例如 {"thinking": {"type": "enabled"}}'
             onChange={(e) => update('extraBody', e.target.value)}
           />
         </label>
@@ -180,6 +308,164 @@ function SettingsSheet({ open, onClose, settings, onSave }) {
           </button>
         </div>
         {testState.msg ? <div className="test-msg">{testState.msg}</div> : null}
+
+        {/* ---------------- 主题 ---------------- */}
+
+        <div className="section">
+          <p className="section-title">主题</p>
+          <div className="segment">
+            <button
+              className={settings.theme !== 'light' ? 'on' : ''}
+              onClick={() => onUpdateSetting('theme', 'dark')}
+            >
+              🌙 黑色
+            </button>
+            <button
+              className={settings.theme === 'light' ? 'on' : ''}
+              onClick={() => onUpdateSetting('theme', 'light')}
+            >
+              ☀️ 白色
+            </button>
+          </div>
+          <small className="data-tip">切换后立即生效，不需要点保存。</small>
+        </div>
+
+        {/* ---------------- 会话背景 ---------------- */}
+
+        <div className="section">
+          <p className="section-title">会话背景</p>
+          <div className="bg-row">
+            <div
+              className="bg-preview"
+              style={bgPreviewUrl ? { backgroundImage: 'url("' + bgPreviewUrl + '")' } : undefined}
+            />
+            <div className="grow">
+              <button className="mini-btn" onClick={onPickBackground}>
+                {hasBackground ? '更换图片' : '选择图片'}
+              </button>
+              {hasBackground ? (
+                <button className="mini-btn" onClick={onClearBackground}>
+                  清除背景
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <small className="data-tip">
+            图片只铺在聊天消息区，会自动压暗/压亮一层保证文字看得清。大图会自动压缩到 1600px 以内。
+          </small>
+        </div>
+
+        {/* ---------------- 人格预设 ---------------- */}
+
+        <div className="section">
+          <p className="section-title">人格预设（全局生效，单选）</p>
+
+          {personas.length === 0 && !editing ? (
+            <p className="persona-empty">
+              还没有人格。加一个之后，它会被作为 system 提示词插到每轮对话最前面。
+            </p>
+          ) : null}
+
+          <div className="persona-list">
+            {personas.map((p) => (
+              <div
+                key={p.id}
+                className={'persona-item' + (settings.activePersonaId === p.id ? ' on' : '')}
+                onClick={() => togglePersona(p.id)}
+              >
+                <span className="persona-radio" />
+                <div className="persona-main">
+                  <div className="persona-name">{p.name}</div>
+                  <div className="persona-desc">{p.prompt}</div>
+                </div>
+                <button
+                  className="persona-act"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setEditing({ id: p.id, name: p.name, prompt: p.prompt })
+                  }}
+                >
+                  编辑
+                </button>
+                <button
+                  className="persona-act"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    removePersona(p.id)
+                  }}
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {editing ? (
+            <div className="persona-form">
+              <label className="field">
+                <span>人格名称</span>
+                <input
+                  type="text"
+                  value={editing.name}
+                  placeholder="例如：毒舌助手"
+                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>人格内容（system 提示词）</span>
+                <textarea
+                  rows={4}
+                  value={editing.prompt}
+                  placeholder="例如：你是一个说话极简、喜欢冷幽默的助手，回答不超过三句话。"
+                  onChange={(e) => setEditing({ ...editing, prompt: e.target.value })}
+                />
+              </label>
+              <div className="persona-form-actions">
+                <button className="ghost-btn" onClick={() => setEditing(null)}>
+                  取消
+                </button>
+                <button className="primary-btn" onClick={savePersona}>
+                  保存人格
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="mini-btn"
+              onClick={() => setEditing({ id: '', name: '', prompt: '' })}
+            >
+              ＋ 新建人格
+            </button>
+          )}
+
+          <small className="data-tip">
+            选中的人格对所有会话生效；再点一次取消。点选立即生效。
+          </small>
+        </div>
+
+        {/* ---------------- 数据 ---------------- */}
+
+        <div className="section">
+          <p className="section-title">会话备份</p>
+          <div className="data-actions">
+            <button className="mini-btn" onClick={onExport} disabled={dataBusy}>
+              导出全部
+            </button>
+            <button
+              className="mini-btn"
+              onClick={() => importInputRef.current && importInputRef.current.click()}
+              disabled={dataBusy}
+            >
+              导入
+            </button>
+          </div>
+          {dataMsg ? <div className="test-msg">{dataMsg}</div> : null}
+          <small className="data-tip">
+            导出会生成一个 JSON 文件并弹出系统分享面板，可以存到文件管理器或发给别人。导入是「追加」，不会覆盖现有会话。
+          </small>
+        </div>
+
+        {/* ---------------- 危险区 ---------------- */}
 
         <div className="danger-zone">
           <button
@@ -210,9 +496,16 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
 
+  const [bgUrl, setBgUrl] = useState('')
+  const [dataBusy, setDataBusy] = useState(false)
+  const [dataMsg, setDataMsg] = useState('')
+
   const abortRef = useRef(null)
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
+  const bgFileRef = useRef(null)
+  const importInputRef = useRef(null)
+  const bgUrlRef = useRef('')
 
   const active = useMemo(
     () => sessions.find((s) => s.id === activeId) || null,
@@ -220,7 +513,15 @@ export default function App() {
   )
   const messages = active ? active.messages || [] : []
 
-  /* 首次加载：从 IndexedDB 取会话 */
+  /* ---------------- 主题 ---------------- */
+
+  useEffect(() => {
+    const theme = settings.theme === 'light' ? 'light' : 'dark'
+    document.documentElement.setAttribute('data-theme', theme)
+  }, [settings.theme])
+
+  /* ---------------- 首次加载会话 ---------------- */
+
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -238,7 +539,55 @@ export default function App() {
     }
   }, [])
 
-  /* 新消息自动滚到底；但如果用户正在往上翻历史，就别硬拽回来 */
+  /* ---------------- 背景图 ---------------- */
+
+  const refreshBackground = useCallback(async () => {
+    try {
+      const blob = await loadBackgroundBlob()
+      if (bgUrlRef.current) {
+        URL.revokeObjectURL(bgUrlRef.current)
+        bgUrlRef.current = ''
+      }
+      if (blob) {
+        const url = URL.createObjectURL(blob)
+        bgUrlRef.current = url
+        setBgUrl(url)
+      } else {
+        setBgUrl('')
+      }
+    } catch (err) {
+      console.warn('加载背景失败', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshBackground()
+    return () => {
+      if (bgUrlRef.current) URL.revokeObjectURL(bgUrlRef.current)
+    }
+  }, [refreshBackground])
+
+  const handleBgFile = async (e) => {
+    const file = e.target.files && e.target.files[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const blob = await compressImage(file, 1600)
+      await saveBackgroundBlob(blob)
+      await refreshBackground()
+    } catch (err) {
+      setError('背景图保存失败：' + (err.message || String(err)))
+    }
+  }
+
+  const handleClearBackground = async () => {
+    if (!confirm('清除当前会话背景？')) return
+    await deleteBackgroundBlob()
+    await refreshBackground()
+  }
+
+  /* ---------------- 滚动 ---------------- */
+
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -246,13 +595,74 @@ export default function App() {
     if (distanceToBottom < 160) el.scrollTop = el.scrollHeight
   }, [active, activeId])
 
-  /* 输入框自适应高度 */
+  /* ---------------- 输入框自适应 ---------------- */
+
   useEffect(() => {
     const ta = textareaRef.current
     if (!ta) return
     ta.style.height = 'auto'
     ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'
   }, [input])
+
+  /* ---------------- 即时设置（主题 / 人格） ---------------- */
+
+  const updateSetting = useCallback((key, value) => {
+    setSettings((prev) => {
+      const next = { ...prev, [key]: value }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
+  const handleSaveSettings = (draft) => {
+    const next = { ...settings, ...draft }
+    setSettings(next)
+    saveSettings(next)
+  }
+
+  /* ---------------- 导出 / 导入 ---------------- */
+
+  const handleExport = async () => {
+    setDataBusy(true)
+    setDataMsg('')
+    try {
+      const r = await exportSessions(sessions)
+      setDataMsg('✓ 已导出 ' + r.count + ' 个会话（' + r.filename + '）')
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err)
+      // 用户取消分享面板不算错误
+      if (/cancel/i.test(msg)) {
+        setDataMsg('已取消')
+      } else {
+        setDataMsg('✗ ' + msg)
+      }
+    } finally {
+      setDataBusy(false)
+    }
+  }
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files && e.target.files[0]
+    e.target.value = ''
+    if (!file) return
+    setDataBusy(true)
+    setDataMsg('')
+    try {
+      const text = await readFileAsText(file)
+      const imported = parseBackupText(text)
+      await bulkPutSessions(imported)
+      const list = await listSessions()
+      setSessions(list)
+      if (!activeId && list.length) setActiveId(list[0].id)
+      setDataMsg('✓ 已导入 ' + imported.length + ' 个会话')
+    } catch (err) {
+      setDataMsg('✗ ' + (err.message || String(err)))
+    } finally {
+      setDataBusy(false)
+    }
+  }
+
+  /* ---------------- 会话操作 ---------------- */
 
   const newChat = useCallback(() => {
     const s = createSession()
@@ -287,6 +697,8 @@ export default function App() {
     if (abortRef.current) abortRef.current.abort()
   }, [])
 
+  /* ---------------- 发送 ---------------- */
+
   const send = useCallback(async () => {
     const text = input.trim()
     if (!text || busy) return
@@ -299,7 +711,6 @@ export default function App() {
 
     setError('')
 
-    /* 当前没有会话就现场建一个 */
     let session = active
     if (!session) {
       session = createSession(deriveTitle(text))
@@ -334,11 +745,15 @@ export default function App() {
       )
     )
 
-    /* 组装给 API 的消息（不含空占位） */
-    const apiMessages = [...baseMessages, userMsg].map((m) => ({
-      role: m.role,
-      content: m.content
-    }))
+    /* 组装给 API 的消息：人格作为 system 插在最前面 */
+    const apiMessages = []
+    const persona = getActivePersona(settings)
+    if (persona && persona.prompt && persona.prompt.trim()) {
+      apiMessages.push({ role: 'system', content: persona.prompt.trim() })
+    }
+    for (const m of [...baseMessages, userMsg]) {
+      apiMessages.push({ role: m.role, content: m.content })
+    }
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -384,7 +799,6 @@ export default function App() {
       }
     }
 
-    /* 节流重绘，避免每个 token 都触发一次 React 重渲染 */
     let raf = 0
     const schedulePaint = () => {
       if (raf) return
@@ -395,13 +809,10 @@ export default function App() {
     }
 
     try {
-      const extraBody = settings.extraBody && settings.extraBody.trim()
-        ? JSON.parse(settings.extraBody)
-        : null
+      const extraBody =
+        settings.extraBody && settings.extraBody.trim() ? JSON.parse(settings.extraBody) : null
       const temperature =
-        settings.temperature && settings.temperature.trim()
-          ? Number(settings.temperature)
-          : null
+        settings.temperature && settings.temperature.trim() ? Number(settings.temperature) : null
 
       for await (const chunk of streamChat({
         apiKey: settings.apiKey.trim(),
@@ -441,29 +852,27 @@ export default function App() {
 
   const onKeyDown = (e) => {
     if (e.key !== 'Enter') return
-    if (e.nativeEvent && e.nativeEvent.isComposing) return // 中文输入法正在选词
+    if (e.nativeEvent && e.nativeEvent.isComposing) return
     if (settings.sendOnEnter && !e.shiftKey) {
       e.preventDefault()
       send()
     }
   }
 
-  const handleSaveSettings = (draft) => {
-    const next = { ...settings, ...draft }
-    setSettings(next)
-    saveSettings(next)
-  }
+  /* ---------------- 渲染 ---------------- */
 
   return (
     <div className="app">
-      {/* 顶栏 */}
       <header className="topbar">
         <button className="icon-btn" onClick={() => setDrawerOpen(true)} aria-label="会话列表">
           ☰
         </button>
         <div className="title">
           <div className="title-main">{active ? active.title : 'ChatCell'}</div>
-          <div className="title-sub">{settings.model || DEFAULT_MODEL}</div>
+          <div className="title-sub">
+            {settings.model || DEFAULT_MODEL}
+            {getActivePersona(settings) ? ' · ' + getActivePersona(settings).name : ''}
+          </div>
         </div>
         <button className="icon-btn" onClick={newChat} aria-label="新对话">
           ＋
@@ -480,8 +889,11 @@ export default function App() {
         </div>
       ) : null}
 
-      {/* 消息区 */}
-      <main className="chat" ref={scrollRef}>
+      <main
+        className={'chat' + (bgUrl ? ' has-bg' : '')}
+        ref={scrollRef}
+        style={bgUrl ? { '--chat-bg-image': 'url("' + bgUrl + '")' } : undefined}
+      >
         {messages.length === 0 ? (
           <div className="empty">
             <div className="empty-logo">🐋</div>
@@ -495,13 +907,12 @@ export default function App() {
         )}
       </main>
 
-      {/* 输入区 */}
       <footer className="composer">
         <textarea
           ref={textareaRef}
           rows={1}
           value={input}
-          placeholder={busy ? '正在回复…' : '说点什么（Enter 发送，Shift+Enter 换行）'}
+          placeholder={busy ? '正在回复…' : '说点什么'}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
         />
@@ -516,7 +927,6 @@ export default function App() {
         )}
       </footer>
 
-      {/* 会话抽屉 */}
       {drawerOpen ? (
         <div className="drawer-mask" onClick={() => setDrawerOpen(false)}>
           <aside className="drawer" onClick={(e) => e.stopPropagation()}>
@@ -566,6 +976,31 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         settings={settings}
         onSave={handleSaveSettings}
+        onUpdateSetting={updateSetting}
+        hasBackground={!!bgUrl}
+        bgPreviewUrl={bgUrl}
+        onPickBackground={() => bgFileRef.current && bgFileRef.current.click()}
+        onClearBackground={handleClearBackground}
+        importInputRef={importInputRef}
+        onExport={handleExport}
+        dataBusy={dataBusy}
+        dataMsg={dataMsg}
+      />
+
+      {/* 隐藏的原生文件选择器 */}
+      <input
+        ref={bgFileRef}
+        className="hidden-input"
+        type="file"
+        accept="image/*"
+        onChange={handleBgFile}
+      />
+      <input
+        ref={importInputRef}
+        className="hidden-input"
+        type="file"
+        accept=".json,application/json"
+        onChange={handleImportFile}
       />
     </div>
   )
