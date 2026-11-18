@@ -45,19 +45,52 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: 安装 Android 命令行工具
-        uses: android-actions/setup-android@v3
-
-      - name: 补齐 Android SDK 平台
+      # 不再使用 android-actions/setup-android：
+      # 该 action 已停更，在 Node 24 下不稳定，且每次都要重下 cmdline-tools。
+      # ubuntu-latest 的 runner 镜像本身就预装了 Android SDK，直接用即可。
+      - name: 确认 Android SDK 位置
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" > /dev/null 2>&1 || true
-          sdkmanager --install "platforms;android-35" > /dev/null 2>&1 || true
-          sdkmanager --install "platforms;android-34" > /dev/null 2>&1 || true
-          sdkmanager --install "build-tools;35.0.0" > /dev/null 2>&1 || true
-          sdkmanager --install "build-tools;34.0.0" > /dev/null 2>&1 || true
-          echo "已安装的 SDK 组件:"
-          sdkmanager --list_installed || true
+          set -e
+          if [ -z "$ANDROID_HOME" ]; then
+            for d in /usr/local/lib/android/sdk /opt/android-sdk /usr/lib/android-sdk; do
+              if [ -d "$d" ]; then
+                echo "ANDROID_HOME=$d" >> "$GITHUB_ENV"
+                echo "ANDROID_SDK_ROOT=$d" >> "$GITHUB_ENV"
+                export ANDROID_HOME="$d"
+                export ANDROID_SDK_ROOT="$d"
+                break
+              fi
+            done
+          fi
+          echo "ANDROID_HOME = ${ANDROID_HOME:-(空)}"
+          echo "ANDROID_SDK_ROOT = ${ANDROID_SDK_ROOT:-(空)}"
+          echo "--- 已装的 platforms ---"
+          ls "${ANDROID_HOME}/platforms" 2>/dev/null || echo "(无)"
+          echo "--- 已装的 build-tools ---"
+          ls "${ANDROID_HOME}/build-tools" 2>/dev/null || echo "(无)"
+          echo "--- sdkmanager 位置 ---"
+          command -v sdkmanager || ls "${ANDROID_HOME}/cmdline-tools" 2>/dev/null || echo "(找不到 sdkmanager)"
+
+      - name: 补齐 Android SDK 组件
+        run: |
+          set +e
+          SDKM="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKM" ]; then
+            SDKM="$(command -v sdkmanager)"
+          fi
+          echo "使用的 sdkmanager => ${SDKM}"
+          if [ -z "$SDKM" ] || [ ! -x "$SDKM" ]; then
+            echo "::warning::找不到 sdkmanager，跳过补齐，完全依赖 runner 预装组件"
+            exit 0
+          fi
+          yes | "$SDKM" --licenses > /dev/null 2>&1
+          for pkg in "platform-tools" "platforms;android-35" "platforms;android-34" "build-tools;35.0.0" "build-tools;34.0.0"; do
+            echo "==> 安装 ${pkg}"
+            "$SDKM" --install "$pkg" 2>&1 | tail -2
+          done
+          echo "--- 补齐后 platforms ---"
+          ls "${ANDROID_HOME}/platforms" 2>/dev/null || echo "(无)"
+          exit 0
 
       - name: 生成 Android 原生工程
         run: npx cap add android || true
