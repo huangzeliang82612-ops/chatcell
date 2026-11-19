@@ -38,6 +38,22 @@ jobs:
       - name: 安装前端依赖
         run: npm install --no-audit --no-fund
 
+      # 版本号只认一个地方：推 tag 时用 tag 号，否则用 package.json。
+      # 这里会把它写回 package.json，这样前端注入的 __APP_VERSION__ 和
+      # Android 的 versionName 会完全一致。
+      - name: 版本号对齐（tag 优先）
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+            echo "使用 tag 版本：$V"
+            node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='$V';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          else
+            V=$(node -p "require('./package.json').version")
+            echo "使用 package.json 版本：$V"
+          fi
+          echo "APP_VERSION=$V" >> "$GITHUB_ENV"
+          echo "APP_VERSION_CODE=${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: 构建前端（产出 dist/）
         run: npm run build
 
@@ -129,6 +145,15 @@ jobs:
 
       - name: 写入 local.properties（告诉 Gradle SDK 在哪）
         run: echo "sdk.dir=${ANDROID_HOME}" > android/local.properties
+
+      # Capacitor 生成的 build.gradle 里 versionName 是写死的 "1.0"、versionCode 是 1，
+      # 不同步的话：应用详情里永远显示 1.0，而且 versionCode 不变会导致新包盖不掉旧包。
+      - name: 同步版本号到 Android 工程
+        run: |
+          sed -i -E "s/versionCode [0-9]+/versionCode ${APP_VERSION_CODE}/" android/app/build.gradle
+          sed -i -E "s/versionName \"[^\"]*\"/versionName \"${APP_VERSION}\"/" android/app/build.gradle
+          echo "版本号已同步：versionName=${APP_VERSION} / versionCode=${APP_VERSION_CODE}"
+          grep -n "versionCode\|versionName" android/app/build.gradle || true
 
       # 仓库里带了一个固定的签名证书 keystore/chatcell.p12。
       # 没有它的话，每次全新 runner 生成的 debug 签名都不同，导致新包无法覆盖安装旧包。

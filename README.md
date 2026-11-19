@@ -196,28 +196,38 @@ GitHub Actions 每次都用一台全新的机器。如果不指定签名，Gradl
 
 ## 六之二、发版流程
 
-以后每次发版就这几步：
+**推一个 tag 就是发版，版本号只需要写一次。**
 
 ```cmd
 git add -A
 git commit -m "改了什么"
 git push
-git tag v1.1.0
+
+git tag v1.1.1
 git push --tags
 ```
 
-| 动作 | 触发什么 |
+CI 会自动做三件事，保证三处版本号完全一致：
+
+| 步骤 | 作用 |
 |---|---|
-| `git push`（推到 main） | 构建一次，APK 在 **Actions → Artifacts** 里 |
-| `git push --tags` | 额外把 APK 挂到 **Releases** 页面，以后下载走那里更顺手 |
+| 把 tag 号（去掉 `v`）写回 `package.json` | 让前端拿到正确版本 |
+| vite 构建时注入 `__APP_VERSION__` | App 内「设置」底部显示这个号 |
+| `sed` 覆盖 `build.gradle` 的 `versionName` / `versionCode` | 系统「应用详情」里显示这个号 |
 
-**版本号怎么维护**
+所以这三个地方永远同步：
 
-1. 改 `package.json` 里的 `"version"`
-2. 打同名 tag（`v1.1.0` 对应 `"1.1.0"`）
-3. App 内「设置」最底部会显示这个号，用来确认手机上装的是哪一版
+| 位置 | 数据来源 |
+|---|---|
+| App 内设置页底部 | tag → package.json → vite define |
+| Android 应用详情 | tag → sed → build.gradle |
+| Releases 页面 | tag 名 |
 
-建议的升级节奏：修 bug → `v1.0.1`；加功能 → `v1.1.0`；大改 → `v2.0.0`。
+**`versionCode` 用 `github.run_number`**（每次构建自增），所以新包永远盖得掉旧包。
+
+> 不打 tag 的分支推送也会构建，那时版本号取 `package.json` 里的值。
+
+**踩过的坑**：早期版本只做了前半截（App 内注入），没同步 `build.gradle`，导致「App 内显示 1.0、系统详情也显示 1.0，但 Releases 上是 v1.1.0」。这两个数是独立的——`versionName` 是 Capacitor 模板里硬编码的 `"1.0"`，不覆盖就永远是 1.0。
 
 ---
 
