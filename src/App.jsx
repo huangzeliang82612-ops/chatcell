@@ -21,6 +21,9 @@ import { renderMarkdown } from './markdown.js'
 
 /* ------------------------------- 工具函数 ------------------------------- */
 
+/** 版本号由 vite.config.js 在构建时注入（来自 package.json） */
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
+
 /** 读文件为文本（file.text() 在旧 WebView 上不一定有，兜一层 FileReader） */
 function readFileAsText(file) {
   if (typeof file.text === 'function') return file.text()
@@ -487,6 +490,10 @@ function SettingsSheet(props) {
           >
             清空全部会话
           </button>
+        </div>
+
+        <div className="app-version">
+          ChatCell v{APP_VERSION}
         </div>
       </div>
     </div>

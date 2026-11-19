@@ -164,6 +164,33 @@ GitHub Actions 每次都用一台全新的机器。如果不指定签名，Gradl
 
 ---
 
+## 六之二、发版流程
+
+以后每次发版就这几步：
+
+```cmd
+git add -A
+git commit -m "改了什么"
+git push
+git tag v1.1.0
+git push --tags
+```
+
+| 动作 | 触发什么 |
+|---|---|
+| `git push`（推到 main） | 构建一次，APK 在 **Actions → Artifacts** 里 |
+| `git push --tags` | 额外把 APK 挂到 **Releases** 页面，以后下载走那里更顺手 |
+
+**版本号怎么维护**
+
+1. 改 `package.json` 里的 `"version"`
+2. 打同名 tag（`v1.1.0` 对应 `"1.1.0"`）
+3. App 内「设置」最底部会显示这个号，用来确认手机上装的是哪一版
+
+建议的升级节奏：修 bug → `v1.0.1`；加功能 → `v1.1.0`；大改 → `v2.0.0`。
+
+---
+
 ## 七、常见问题
 
 **装完打开是白屏？**
