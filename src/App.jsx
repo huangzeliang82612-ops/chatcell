@@ -201,10 +201,14 @@ function SettingsSheet(props) {
     if (editing.id) {
       const idx = list.findIndex((p) => p.id === editing.id)
       if (idx >= 0) list[idx] = { ...list[idx], name, prompt }
+      onUpdateSetting('personas', list)
     } else {
-      list.push({ id: newId(), name, prompt })
+      // 新建后自动启用，避免"建好了但没选中"这种坑
+      const created = { id: newId(), name, prompt }
+      list.push(created)
+      onUpdateSetting('personas', list)
+      onUpdateSetting('activePersonaId', created.id)
     }
-    onUpdateSetting('personas', list)
     setEditing(null)
     setTestState({ busy: false, msg: '' })
   }
@@ -439,7 +443,12 @@ function SettingsSheet(props) {
           )}
 
           <small className="data-tip">
-            选中的人格对所有会话生效；再点一次取消。点选立即生效。
+            选中的人格对所有会话生效；再点一次取消，点选立即生效。
+            <br />
+            <br />
+            ⚠️ 人格是每一轮作为 system 提示词发出去的，但模型会优先模仿已有对话的语气——
+            <b>在历史消息很多的旧会话里，人格可能被"带偏"而看不出效果</b>。
+            切换人格后建议新建一个对话，效果最干净。
           </small>
         </div>
 

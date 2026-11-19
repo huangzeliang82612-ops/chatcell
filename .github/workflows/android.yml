@@ -98,6 +98,20 @@ jobs:
       - name: 把 web 产物同步进原生工程
         run: npx cap sync android
 
+      # 双保险：即使 @capacitor/keyboard 插件没生效，
+      # 也让系统用 adjustResize（缩小窗口）而不是 adjustPan（整个画面上移）。
+      # 否则键盘弹出时顶栏会被顶出屏幕。
+      - name: 强制键盘调整模式为 adjustResize
+        run: |
+          MF=android/app/src/main/AndroidManifest.xml
+          if grep -q 'windowSoftInputMode' "$MF"; then
+            echo "已有 windowSoftInputMode，跳过"
+          else
+            sed -i 's|<activity|<activity android:windowSoftInputMode="adjustResize"|' "$MF"
+            echo "已写入 adjustResize"
+          fi
+          grep -n 'windowSoftInputMode' "$MF" || true
+
       - name: 给 gradlew 加执行权限
         # Windows 上提交的仓库到 Linux 常丢可执行位，这一步不做会直接 Permission denied
         run: chmod +x android/gradlew

@@ -60,8 +60,11 @@ body {
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  /* 用 100% 而不是 100dvh：键盘弹出时 WebView 视口会缩小（adjustResize），
+     100% 会跟着变，而 dvh 在部分 WebView 上不跟随键盘变化。 */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ------------------------------- 顶栏 ------------------------------- */
