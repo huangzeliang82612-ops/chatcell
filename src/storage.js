@@ -22,6 +22,8 @@ export const DEFAULT_SETTINGS = {
   extraBody: '',
   temperature: '',
   sendOnEnter: true,
+  /* 模型上下文窗口大小（tokens），只用于顶栏用量显示 */
+  contextLimit: '64000',
   /* 'dark' | 'light' */
   theme: 'dark',
   /* [{ id, name, prompt }] */

@@ -17,8 +17,8 @@ import {
   saveSettings
 } from './storage.js'
 import { exportSessions, parseBackupText } from './backup.js'
-import { CONTEXT_KEEP, compactSession, needsCompaction } from './context.js'
 import { renderMarkdown } from './markdown.js'
+import { estimateMessagesTokens, estimateTokens, formatTokens } from './token.js'
 
 /* ------------------------------- 工具函数 ------------------------------- */
 
@@ -286,6 +286,20 @@ function SettingsSheet(props) {
         </label>
 
         <label className="field">
+          <span>模型最大上下文（tokens）</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={draft.contextLimit}
+            placeholder="64000"
+            onChange={(e) => update('contextLimit', e.target.value.replace(/[^0-9]/g, ''))}
+          />
+          <small>
+            填你所用模型的上下文窗口大小，只用于顶栏的用量显示（例如 64000、128000、1000000）。
+          </small>
+        </label>
+
+        <label className="field">
           <span>温度（可留空）</span>
           <input
             type="text"
@@ -517,7 +531,6 @@ export default function App() {
   const [dataBusy, setDataBusy] = useState(false)
   const [dataMsg, setDataMsg] = useState('')
   const [kbOpen, setKbOpen] = useState(false)
-  const [compacting, setCompacting] = useState(false)
 
   const abortRef = useRef(null)
   const scrollRef = useRef(null)
@@ -541,6 +554,16 @@ export default function App() {
       ),
     [sessions]
   )
+
+  // 顶栏的上下文用量：人格提示词 + 当前会话全部消息（reasoning 不回传，不计入）
+  const activePersona = useMemo(() => getActivePersona(settings), [settings])
+  const contextLimit = Number(settings.contextLimit) || 64000
+  const usedTokens = useMemo(() => {
+    let total = 0
+    if (activePersona && activePersona.prompt) total += estimateTokens(activePersona.prompt)
+    total += estimateMessagesTokens(messages)
+    return total
+  }, [messages, activePersona])
 
   /* ---------------- 主题 ---------------- */
 
@@ -782,14 +805,9 @@ export default function App() {
     setActiveId(id)
     setDrawerOpen(false)
     setError('')
-    // 打开即算「使用过」，立刻顶到列表最前面
-    setSessions((prev) => {
-      const target = prev.find((s) => s.id === id)
-      if (!target) return prev
-      const updated = { ...target, updatedAt: Date.now() }
-      putSession(updated).catch(() => {})
-      return prev.map((s) => (s.id === id ? updated : s))
-    })
+    // 刻意不更新 updatedAt：
+    // 排序只在「会话内容真正变化」（用户或 AI 发消息）时才动，
+    // 仅仅点开看看不该把列表顺序搞乱。
   }, [])
 
   const renameSession = useCallback(
@@ -876,49 +894,13 @@ export default function App() {
       )
     )
 
-    /* ---------------- 上下文压缩：滑动窗口 + 摘要 ---------------- */
-    let summaryObj = session.summary || null
-    let cutIndex =
-      summaryObj && typeof summaryObj.upTo === 'number'
-        ? Math.min(summaryObj.upTo, baseMessages.length)
-        : 0
-
-    if (needsCompaction(baseMessages)) {
-      setCompacting(true)
-      try {
-        const res = await compactSession({
-          apiKey: settings.apiKey.trim(),
-          baseUrl: settings.baseUrl,
-          model: settings.model || DEFAULT_MODEL,
-          summary: summaryObj,
-          messages: baseMessages
-        })
-        if (res.changed && res.summary) {
-          summaryObj = res.summary
-          cutIndex = Math.min(res.summary.upTo, baseMessages.length)
-        }
-      } catch (err) {
-        // 摘要失败就退化成纯滑动窗口，保证不会因为超长而报错
-        cutIndex = Math.max(cutIndex, baseMessages.length - CONTEXT_KEEP)
-        console.warn('上下文压缩失败，退化为滑动窗口：', err)
-      } finally {
-        setCompacting(false)
-      }
-    }
-
-    /* 组装给 API 的消息：人格 → 早期摘要 → 最近的一部分消息 */
+    /* 组装给 API 的消息：人格作为 system 插在最前面，历史全量发送（不做压缩） */
     const apiMessages = []
     const persona = getActivePersona(settings)
     if (persona && persona.prompt && persona.prompt.trim()) {
       apiMessages.push({ role: 'system', content: persona.prompt.trim() })
     }
-    if (summaryObj && summaryObj.text) {
-      apiMessages.push({
-        role: 'system',
-        content: '以下是本次对话更早部分的摘要，请在此基础上继续：\n\n' + summaryObj.text
-      })
-    }
-    for (const m of [...baseMessages.slice(cutIndex), userMsg]) {
+    for (const m of [...baseMessages, userMsg]) {
       apiMessages.push({ role: m.role, content: m.content })
     }
 
@@ -952,11 +934,12 @@ export default function App() {
         userMsg,
         { ...aiMsg, content: accContent, reasoning: accReasoning, pending: false, ...(extra || {}) }
       ]
+      // 丢弃旧版本遗留的 summary 字段（压缩功能已取消）
+      const { summary: _legacySummary, ...sessionRest } = session
       const finalSession = {
-        ...session,
+        ...sessionRest,
         title: baseMessages.length === 0 ? deriveTitle(text) : session.title,
         updatedAt: Date.now(),
-        summary: summaryObj || undefined,
         messages: finalMessages
       }
       setSessions((prev) => prev.map((s) => (s.id === sid ? finalSession : s)))
@@ -1038,8 +1021,10 @@ export default function App() {
         <div className="title">
           <div className="title-main">{active ? active.title : 'ChatCell'}</div>
           <div className="title-sub">
-            {settings.model || DEFAULT_MODEL}
-            {getActivePersona(settings) ? ' · ' + getActivePersona(settings).name : ''}
+            <span className={usedTokens > contextLimit ? 'ctx-over' : undefined}>
+              {formatTokens(usedTokens)}/{formatTokens(contextLimit)}
+            </span>
+            {activePersona ? ' · ' + activePersona.name : ''}
           </div>
         </div>
         <button className="icon-btn" onClick={newChat} aria-label="新对话">
@@ -1080,7 +1065,7 @@ export default function App() {
           ref={textareaRef}
           rows={1}
           value={input}
-          placeholder={compacting ? '正在压缩上下文…' : busy ? '正在回复…' : '说点什么'}
+          placeholder={busy ? '正在回复…' : '说点什么'}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
         />

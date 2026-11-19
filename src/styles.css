@@ -102,6 +102,12 @@ body {
   text-overflow: ellipsis;
 }
 
+/* 上下文用量超限时标红 */
+.title-sub .ctx-over {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .icon-btn {
   flex: 0 0 auto;
   width: 38px;
