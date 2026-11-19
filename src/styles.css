@@ -404,6 +404,11 @@ body {
   border-top: 1px solid var(--line);
 }
 
+/* 键盘弹出时，安全区那块已经被键盘盖住了，再留 padding 会多出一条空白 */
+.app.kb-open .composer {
+  padding-bottom: 8px;
+}
+
 .composer textarea {
   flex: 1 1 auto;
   min-height: 40px;

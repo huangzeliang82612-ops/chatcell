@@ -508,6 +508,7 @@ export default function App() {
   const [bgUrl, setBgUrl] = useState('')
   const [dataBusy, setDataBusy] = useState(false)
   const [dataMsg, setDataMsg] = useState('')
+  const [kbOpen, setKbOpen] = useState(false)
 
   const abortRef = useRef(null)
   const scrollRef = useRef(null)
@@ -569,11 +570,13 @@ export default function App() {
         try {
           const show = await Keyboard.addListener('keyboardWillShow', (info) => {
             pluginActive = true
+            setKbOpen(true)
             const kb = (info && info.keyboardHeight) || 0
             setH(Math.max(200, window.innerHeight - kb))
           })
           const hide = await Keyboard.addListener('keyboardWillHide', () => {
             pluginActive = true
+            setKbOpen(false)
             setH(window.innerHeight)
           })
           listeners.push(show, hide)
@@ -588,7 +591,9 @@ export default function App() {
     const vv = window.visualViewport
     const applyFallback = () => {
       if (pluginActive) return
-      setH(vv && vv.height ? vv.height : window.innerHeight)
+      const h = vv && vv.height ? vv.height : window.innerHeight
+      setH(h)
+      setKbOpen(!!vv && vv.height < window.innerHeight - 120)
     }
     if (vv) {
       vv.addEventListener('resize', applyFallback)
@@ -597,6 +602,7 @@ export default function App() {
     applyFallback()
 
     const onOrient = () => {
+      setKbOpen(false)
       if (!pluginActive) setH(window.innerHeight)
     }
     window.addEventListener('orientationchange', onOrient)
@@ -941,7 +947,7 @@ export default function App() {
   /* ---------------- 渲染 ---------------- */
 
   return (
-    <div className="app">
+    <div className={'app' + (kbOpen ? ' kb-open' : '')}>
       <header className="topbar">
         <button className="icon-btn" onClick={() => setDrawerOpen(true)} aria-label="会话列表">
           ☰

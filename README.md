@@ -239,6 +239,27 @@ echo "sdk.dir=${ANDROID_HOME}" > android/local.properties
 
 **产品上的处理**：设置页的人格区域已经加了这条提示，并建议切换人格后新建对话。
 
+### 7. 键盘弹出把整个界面顶上去（顶栏飞出屏幕）
+
+**现象**：点输入框弹出键盘，整个页面往上平移，顶栏消失，背景图也跟着上移。
+
+**原因**：Capacitor 默认没装键盘插件，`windowSoftInputMode` 是 `adjustUnspecified`，系统选了 **adjustPan**（平移窗口）而不是 adjustResize（缩小窗口）。而且 Capacitor 7 的 `targetSdk` 是 35，Android 15 起强制 edge-to-edge，`adjustResize` 本身也变得不可靠。
+
+**最终方案（让系统完全撒手，前端自己算）**
+
+1. 装 `@capacitor/keyboard`，配置 `plugins.Keyboard.resize = "none"` → 等效 `adjustNothing`，**系统完全不动窗口**
+2. 监听 `keyboardWillShow` 事件，直接拿 `info.keyboardHeight`
+3. 前端算：`--app-h = window.innerHeight - keyboardHeight`，然后 `.app { height: var(--app-h, 100%) }`
+4. 兜底：插件不可用时（浏览器调试）退回 `window.visualViewport.height`
+
+**试过但没解决问题的做法**
+
+| 做法 | 为什么不行 |
+|---|---|
+| 只在 AndroidManifest 写 `adjustResize` | Android 15 edge-to-edge 下不再缩小 WebView 视口 |
+| 只把 CSS 高度改成 `100%` / `100dvh` | 窗口被 pan 时视口高度压根没变，CSS 无从跟随 |
+| 只加 `visualViewport` 监听 | 窗口仍在 pan 时 `vv.height` 不变，等于没监听 |
+
 ### 已验证通过的点（真机实测）
 
 | 项 | 结论 |
