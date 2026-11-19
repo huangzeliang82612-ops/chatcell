@@ -8,11 +8,12 @@
   },
   "android": {
     "allowMixedContent": false,
-    "webContentsDebuggingEnabled": true
+    "webContentsDebuggingEnabled": true,
+    "adjustMarginsForEdgeToEdge": "force"
   },
   "plugins": {
     "Keyboard": {
-      "resize": "native"
+      "resize": "none"
     }
   }
 }

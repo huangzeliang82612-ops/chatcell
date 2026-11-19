@@ -548,6 +548,76 @@ export default function App() {
     }
   }, [])
 
+  /* ---------------- 键盘遮挡处理 ---------------- */
+  // 策略：让 Android 完全不要插手（Keyboard.resize = "none" → adjustNothing），
+  // 由前端自己算高度：
+  //   1. 优先用 @capacitor/keyboard 的 keyboardWillShow 事件，它直接给出键盘高度
+  //   2. 插件不可用时（浏览器调试）退回 visualViewport
+  useEffect(() => {
+    const setH = (px) => {
+      document.documentElement.style.setProperty('--app-h', Math.round(px) + 'px')
+    }
+    setH(window.innerHeight || 0)
+
+    let pluginActive = false
+    const listeners = []
+    let cancelled = false
+
+    import('@capacitor/keyboard')
+      .then(async ({ Keyboard }) => {
+        if (cancelled) return
+        try {
+          const show = await Keyboard.addListener('keyboardWillShow', (info) => {
+            pluginActive = true
+            const kb = (info && info.keyboardHeight) || 0
+            setH(Math.max(200, window.innerHeight - kb))
+          })
+          const hide = await Keyboard.addListener('keyboardWillHide', () => {
+            pluginActive = true
+            setH(window.innerHeight)
+          })
+          listeners.push(show, hide)
+        } catch {
+          /* Web 环境下插件未实现，忽略 */
+        }
+      })
+      .catch(() => {
+        /* 模块不存在，忽略 */
+      })
+
+    const vv = window.visualViewport
+    const applyFallback = () => {
+      if (pluginActive) return
+      setH(vv && vv.height ? vv.height : window.innerHeight)
+    }
+    if (vv) {
+      vv.addEventListener('resize', applyFallback)
+      vv.addEventListener('scroll', applyFallback)
+    }
+    applyFallback()
+
+    const onOrient = () => {
+      if (!pluginActive) setH(window.innerHeight)
+    }
+    window.addEventListener('orientationchange', onOrient)
+
+    return () => {
+      cancelled = true
+      if (vv) {
+        vv.removeEventListener('resize', applyFallback)
+        vv.removeEventListener('scroll', applyFallback)
+      }
+      window.removeEventListener('orientationchange', onOrient)
+      listeners.forEach((l) => {
+        try {
+          l.remove()
+        } catch {
+          /* ignore */
+        }
+      })
+    }
+  }, [])
+
   /* ---------------- 背景图 ---------------- */
 
   const refreshBackground = useCallback(async () => {
