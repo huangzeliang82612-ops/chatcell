@@ -111,6 +111,14 @@ export function parseBackupText(text) {
       title: typeof raw.title === 'string' && raw.title ? raw.title : '导入的会话',
       createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : now,
       updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
+      summary:
+        raw.summary && typeof raw.summary.text === 'string'
+          ? {
+              text: raw.summary.text,
+              upTo: typeof raw.summary.upTo === 'number' ? raw.summary.upTo : 0,
+              updatedAt: typeof raw.summary.updatedAt === 'number' ? raw.summary.updatedAt : now
+            }
+          : undefined,
       messages: cleanMessages
     })
   }

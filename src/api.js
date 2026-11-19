@@ -190,3 +190,54 @@ export async function pingApi({ apiKey, baseUrl, model }) {
   }
   return true
 }
+
+/** 非流式补全，用于上下文摘要压缩 */
+export async function completeOnce(options) {
+  const {
+    apiKey,
+    baseUrl,
+    model,
+    messages,
+    maxTokens = 500,
+    temperature = 0.3,
+    extraBody = null
+  } = options
+
+  if (!apiKey) throw new Error('缺少 API Key')
+
+  const body = {
+    model: model || DEFAULT_MODEL,
+    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    stream: false,
+    max_tokens: maxTokens
+  }
+
+  if (typeof temperature === 'number') body.temperature = temperature
+
+  // 摘要请求不继承用户的额外参数（比如 thinking 开关），避免副作用
+  if (extraBody && typeof extraBody === 'object') {
+    Object.assign(body, extraBody)
+  }
+
+  const res = await fetch(buildEndpoint(baseUrl), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + apiKey
+    },
+    body: JSON.stringify(body)
+  })
+
+  if (!res.ok) {
+    const t = await res.text().catch(() => '')
+    throw new Error('[' + res.status + '] ' + t.slice(0, 300))
+  }
+
+  const json = await res.json()
+  const content = json && json.choices && json.choices[0] && json.choices[0].message
+    ? json.choices[0].message.content
+    : ''
+
+  if (!content) throw new Error('摘要接口没有返回内容')
+  return String(content).trim()
+}

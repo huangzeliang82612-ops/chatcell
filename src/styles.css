@@ -534,7 +534,8 @@ body {
   color: var(--text-dim);
 }
 
-.del-btn {
+.del-btn,
+.edit-btn {
   flex: 0 0 auto;
   background: none;
   border: none;

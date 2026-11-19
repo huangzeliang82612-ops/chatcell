@@ -17,6 +17,7 @@ import {
   saveSettings
 } from './storage.js'
 import { exportSessions, parseBackupText } from './backup.js'
+import { CONTEXT_KEEP, compactSession, needsCompaction } from './context.js'
 import { renderMarkdown } from './markdown.js'
 
 /* ------------------------------- 工具函数 ------------------------------- */
@@ -516,6 +517,7 @@ export default function App() {
   const [dataBusy, setDataBusy] = useState(false)
   const [dataMsg, setDataMsg] = useState('')
   const [kbOpen, setKbOpen] = useState(false)
+  const [compacting, setCompacting] = useState(false)
 
   const abortRef = useRef(null)
   const scrollRef = useRef(null)
@@ -529,6 +531,16 @@ export default function App() {
     [sessions, activeId]
   )
   const messages = active ? active.messages || [] : []
+
+  // 会话列表按「最后使用时间」实时排序。
+  // 之前只在启动时排过一次，所以发送消息后列表顺序不变，必须重启才更新。
+  const sortedSessions = useMemo(
+    () =>
+      [...sessions].sort(
+        (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
+      ),
+    [sessions]
+  )
 
   /* ---------------- 主题 ---------------- */
 
@@ -770,7 +782,34 @@ export default function App() {
     setActiveId(id)
     setDrawerOpen(false)
     setError('')
+    // 打开即算「使用过」，立刻顶到列表最前面
+    setSessions((prev) => {
+      const target = prev.find((s) => s.id === id)
+      if (!target) return prev
+      const updated = { ...target, updatedAt: Date.now() }
+      putSession(updated).catch(() => {})
+      return prev.map((s) => (s.id === id ? updated : s))
+    })
   }, [])
+
+  const renameSession = useCallback(
+    async (id, currentTitle) => {
+      const input = prompt('重命名会话', currentTitle)
+      if (input === null) return
+      const title = input.trim()
+      if (!title || title === currentTitle) return
+      const target = sessions.find((s) => s.id === id)
+      if (!target) return
+      const updated = { ...target, title, updatedAt: Date.now() }
+      setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)))
+      try {
+        await putSession(updated)
+      } catch (err) {
+        setError('重命名保存失败：' + (err.message || String(err)))
+      }
+    },
+    [sessions]
+  )
 
   const removeSession = useCallback(
     async (id) => {
@@ -837,13 +876,49 @@ export default function App() {
       )
     )
 
-    /* 组装给 API 的消息：人格作为 system 插在最前面 */
+    /* ---------------- 上下文压缩：滑动窗口 + 摘要 ---------------- */
+    let summaryObj = session.summary || null
+    let cutIndex =
+      summaryObj && typeof summaryObj.upTo === 'number'
+        ? Math.min(summaryObj.upTo, baseMessages.length)
+        : 0
+
+    if (needsCompaction(baseMessages)) {
+      setCompacting(true)
+      try {
+        const res = await compactSession({
+          apiKey: settings.apiKey.trim(),
+          baseUrl: settings.baseUrl,
+          model: settings.model || DEFAULT_MODEL,
+          summary: summaryObj,
+          messages: baseMessages
+        })
+        if (res.changed && res.summary) {
+          summaryObj = res.summary
+          cutIndex = Math.min(res.summary.upTo, baseMessages.length)
+        }
+      } catch (err) {
+        // 摘要失败就退化成纯滑动窗口，保证不会因为超长而报错
+        cutIndex = Math.max(cutIndex, baseMessages.length - CONTEXT_KEEP)
+        console.warn('上下文压缩失败，退化为滑动窗口：', err)
+      } finally {
+        setCompacting(false)
+      }
+    }
+
+    /* 组装给 API 的消息：人格 → 早期摘要 → 最近的一部分消息 */
     const apiMessages = []
     const persona = getActivePersona(settings)
     if (persona && persona.prompt && persona.prompt.trim()) {
       apiMessages.push({ role: 'system', content: persona.prompt.trim() })
     }
-    for (const m of [...baseMessages, userMsg]) {
+    if (summaryObj && summaryObj.text) {
+      apiMessages.push({
+        role: 'system',
+        content: '以下是本次对话更早部分的摘要，请在此基础上继续：\n\n' + summaryObj.text
+      })
+    }
+    for (const m of [...baseMessages.slice(cutIndex), userMsg]) {
       apiMessages.push({ role: m.role, content: m.content })
     }
 
@@ -881,6 +956,7 @@ export default function App() {
         ...session,
         title: baseMessages.length === 0 ? deriveTitle(text) : session.title,
         updatedAt: Date.now(),
+        summary: summaryObj || undefined,
         messages: finalMessages
       }
       setSessions((prev) => prev.map((s) => (s.id === sid ? finalSession : s)))
@@ -1004,7 +1080,7 @@ export default function App() {
           ref={textareaRef}
           rows={1}
           value={input}
-          placeholder={busy ? '正在回复…' : '说点什么'}
+          placeholder={compacting ? '正在压缩上下文…' : busy ? '正在回复…' : '说点什么'}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
         />
@@ -1029,10 +1105,10 @@ export default function App() {
               </button>
             </div>
             <div className="drawer-list">
-              {sessions.length === 0 ? (
+              {sortedSessions.length === 0 ? (
                 <p className="drawer-empty">还没有会话</p>
               ) : (
-                sessions.map((s) => (
+                sortedSessions.map((s) => (
                   <div
                     key={s.id}
                     className={'drawer-item' + (s.id === activeId ? ' active' : '')}
@@ -1045,6 +1121,16 @@ export default function App() {
                         {new Date(s.updatedAt || s.createdAt).toLocaleDateString()}
                       </div>
                     </div>
+                    <button
+                      className="edit-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        renameSession(s.id, s.title)
+                      }}
+                      aria-label="重命名"
+                    >
+                      ✎
+                    </button>
                     <button
                       className="del-btn"
                       onClick={(e) => {
